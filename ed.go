@@ -2,7 +2,7 @@ package main
 
 import (
 	"errors"
-	"os"
+	"fmt"
 
 	"github.com/gdamore/tcell/v2"
 	creed "github.com/marekmaskarinec/creed/lib"
@@ -15,37 +15,38 @@ type Ed struct {
 	// the cli is a buffer too to simplify things
 	cli       Buffer
 	cliHeight int
+	writer string
 
 	srn tcell.Screen
 }
 
-func newEd() (Ed, error) {
+func newEd() (*Ed, error) {
 	ed := Ed{}
 	var err error
 	ed.srn, err = tcell.NewScreen()
 	if err != nil {
-		return ed, err
+		return &ed, err
 	}
 
 	if err = ed.srn.Init(); err != nil {
-		return ed, err
+		return &ed, err
 	}
 
 	inst := new(creed.Instance)
-	*inst = creed.NewInstance("hello world", os.Stderr)
-	ed.buffers = []Buffer{
-		Buffer{
-			inst: inst,
-		},
-	}
-	inst.Sel.Length = 1
-
-	inst = new(creed.Instance)
-	*inst = creed.NewInstance("", os.Stderr)
+	*inst = creed.NewInstance("", &ed)
 	ed.cli = Buffer{inst: inst}
 	ed.cliHeight = 2
 
-	return ed, err
+	return &ed, err
+}
+
+// Implement io.Writer
+func (ed *Ed) Write(p []byte) (n int, err error) {
+	ed.writer = ""
+	for i:=0; i < len(p); i++ {
+		ed.writer += string(rune(p[i]))
+	}
+	return len(p), nil	
 }
 
 func (ed *Ed) handleKey(ev *tcell.EventKey) error {
@@ -57,24 +58,27 @@ func (ed *Ed) handleKey(ev *tcell.EventKey) error {
 	switch ev.Key() {
 	case tcell.KeyRune:
 		buf.insertRune(ev.Rune())
+	case tcell.KeyTab:
+		buf.insertRune('\t')
 	case tcell.KeyBackspace2:
 		buf.deleteRune()
 	case tcell.KeyEscape:
 		ed.commandMode = !ed.commandMode
 	case tcell.KeyEnter:
 		if ed.commandMode {
-			var execBuf *Buffer
 			if len(ed.buffers) != 0 {
-				execBuf = &ed.buffers[ed.bufferi]
-			}
-			if err := execBuf.inst.ExecCommand(string(ed.cli.inst.Buf)); err != nil {
-				//return err
-			}
+				execBuf := &ed.buffers[ed.bufferi]
+				if err := execBuf.inst.ExecCommand(string(ed.cli.inst.Buf)); err != nil {
+					fmt.Fprintf(ed, "%v", err)
+				}
 
-			ed.cli.inst.Buf = []rune{}
-			ed.cli.inst.Sel = creed.Sel{
-				Index:  0,
-				Length: 1,
+				ed.cli.inst.Buf = []rune{}
+				ed.cli.inst.Sel = creed.Sel{
+					Index:  0,
+					Length: 1,
+				}
+			} else {
+				fmt.Fprintf(ed, "no buffer")
 			}
 		} else {
 			buf.insertRune('\n')
@@ -86,10 +90,14 @@ func (ed *Ed) handleKey(ev *tcell.EventKey) error {
 		buf.inst.ExecCommand("1 ++")
 
 	case tcell.KeyUp:
-		buf.moveUp()
+		if len(ed.buffers) != 0 {
+			ed.buffers[ed.bufferi].moveUp()
+		}
 
 	case tcell.KeyDown:
-		buf.moveDown()
+		if len(ed.buffers) != 0 {
+			ed.buffers[ed.bufferi].moveDown()
+		}
 
 	case tcell.KeyCtrlT:
 		ed.buffers = append(ed.buffers, newBuffer())
@@ -135,6 +143,23 @@ func (ed *Ed) handle() error {
 	return nil
 }
 
+func (ed *Ed) drawWriter(box Box) {
+	if len(ed.writer) == 0 { return }
+
+	x := box.x + 1
+	y := box.y + 1
+
+	for i:=0; i < len(ed.writer); i++ {
+		if ed.writer[i] == '\n' || x >= box.x + box.w {
+			y++
+			x = box.x + 1
+		}
+
+		ed.srn.SetContent(x, y, rune(ed.writer[i]), nil, styleDefault)
+		x++
+	}
+}
+
 func (ed *Ed) draw() {
 	ed.srn.Clear()
 	w, h := ed.srn.Size()
@@ -161,10 +186,19 @@ func (ed *Ed) draw() {
 	}
 
 	w, h = ed.srn.Size()
-	ed.cli.draw(ed.srn, Box{
+  cliBox := Box{
 		x: 0, y: h - ed.cliHeight - 1,
-		w: w - 1, h: ed.cliHeight,
-	}, ed.commandMode)
+		w: w/2 - 1, h: ed.cliHeight,
+	}
+	ed.cli.draw(ed.srn, cliBox, ed.commandMode)
+	if ed.commandMode {
+ 	 cliBox.draw(ed.srn, styleSel)
+	}
+
+	ed.drawWriter(Box{
+		x: w/2, y: h - ed.cliHeight - 1,
+		w: w/2, h: ed.cliHeight + 1})
+
 	if len(ed.buffers) != 0 {
 		box.x = mainBufferX
 		ed.buffers[ed.bufferi].draw(ed.srn, box, true)

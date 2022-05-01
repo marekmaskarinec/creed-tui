@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/gdamore/tcell/v2"
 	creed "github.com/marekmaskarinec/creed/lib"
@@ -45,8 +46,8 @@ func (buf *Buffer) drawBorder(srn tcell.Screen, box Box, selected bool) {
 
 func (buf *Buffer) drawContent(srn tcell.Screen, box Box) {
 	min, _ := getLFs(buf.inst.Buf, buf.inst.Sel.Index-1)
-	sx := box.x + 1
-	sy := box.y + 1 + (box.h-2)/2
+	sx := box.x
+	sy := box.y + box.h/2
 
 	idx := min - 1
 	for y := sy - 1; y > box.y && idx >= 0; y-- {
@@ -64,7 +65,7 @@ func (buf *Buffer) drawContent(srn tcell.Screen, box Box) {
 	}
 
 	idx = min + 1
-	for y := sy; y < box.y+box.h && idx < len(buf.inst.Buf); y++ {
+	for y := sy; y <= box.y+box.h && idx < len(buf.inst.Buf); y++ {
 		mi, mx := getLFs(buf.inst.Buf, idx)
 		if mi == idx {
 			buf.drawRune(srn, sx, y, idx)
@@ -78,7 +79,7 @@ func (buf *Buffer) drawContent(srn tcell.Screen, box Box) {
 				x++
 			}
 			x++
-			if x >= box.x + box.w {
+			if x >= box.x + box.w - 1 {
 				x = sx + 4
 				y++
 			}
@@ -102,14 +103,56 @@ func (buf *Buffer) drawStatusBar(srn tcell.Screen, box Box) {
 	}
 }
 
+func (buf *Buffer) drawLineNumbers(srn tcell.Screen, box Box) int {
+	x := box.x + 1
+	lno := 0
+	lineCount := 0
+
+	for i:=0; i < len(buf.inst.Buf); i++ {
+		if buf.inst.Buf[i] == '\n' {
+			lineCount++
+
+			if i < buf.inst.Sel.Index {
+				lno++
+			}
+		}
+	}
+
+	l := lno - box.h/2
+	maxLen := len(strconv.Itoa(lineCount))
+	for y:=box.y; y <= box.y + box.h; y++ {
+		if l < 0 || l >= lineCount {
+			srn.SetContent(x + maxLen - 1, y, '~', nil, styleDefault)
+		} else {
+			s := strconv.Itoa(l)
+			off := maxLen - len(s)
+
+			for i:=0; i < len(s); i++ {
+				srn.SetContent(x + i + off, y, rune(s[i]), nil, styleDefault)
+			}
+		}
+
+		l++
+	}
+
+	return maxLen + 1
+}
+
 func (buf *Buffer) draw(srn tcell.Screen, box Box, selected bool) {
 	if buf.inst.Sel.Length == 0 {
 		buf.inst.Sel.Length = 1
 	}
 
 	buf.drawBorder(srn, box, selected)
-	buf.drawContent(srn, box)
 	buf.drawStatusBar(srn, box)
+
+	box.x++; box.w -= 2
+	box.y++; box.h -= 2
+	
+	numberWidth := buf.drawLineNumbers(srn, box) + 1
+	box.x += numberWidth
+	box.w -= numberWidth
+	buf.drawContent(srn, box)
 }
 
 func (buf *Buffer) insertRune(r rune) {
@@ -127,8 +170,11 @@ func (buf *Buffer) deleteRune() {
 		buf.inst.Buf = buf.inst.Buf[:len(buf.inst.Buf)-1]
 	}
 
+	clip := buf.inst.Clipboard
 	buf.inst.Sel.Length = 1
 	buf.inst.ExecCommand("1 -- d")
+
+	buf.inst.Clipboard = clip
 }
 
 func (buf *Buffer) moveUp() {

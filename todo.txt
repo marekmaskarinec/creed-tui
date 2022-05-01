@@ -1,0 +1,2 @@
+* mouse selection
+* sync clipboard between instances and with X
