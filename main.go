@@ -22,6 +22,16 @@ func main() {
 	}
 	defer ed.srn.Fini()
 
+	for i:=1; i < len(os.Args); i++ {
+		ed.buffers = append(ed.buffers, newBuffer())
+		ed.bufferi = len(ed.buffers) - 1
+		err := ed.buffers[ed.bufferi].inst.ExecCommand(
+			fmt.Sprintf("\"%s\" read", os.Args[i]))
+		if err != nil {
+			fmt.Fprintf(ed, "%v", err)
+		}
+	}
+
 	for {
 		err := ed.handle()
 		if err != nil {
